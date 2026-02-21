@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Agent Voice Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+</head>
+<body>
+  <h2>Ration Agent — Voice Test</h2>
+  <button id="startBtn">Start Call</button>
+  <button id="endBtn" disabled>End Call</button>
+  <div id="status">Ready</div>
+  <div id="log" style="margin-top:20px; font-family:monospace; white-space:pre"></div>
+
+  <script>
+    const CALL_SERVER = "http://localhost:8001";
+    let room;
+
+    function log(msg) {
+      document.getElementById("log").textContent += msg + "\n";
+      console.log(msg);
+    }
+
+    document.getElementById("startBtn").onclick = async () => {
+      document.getElementById("startBtn").disabled = true;
+      document.getElementById("status").textContent = "Connecting...";
+
+      // Start inbound call
+      const res  = await fetch(`${CALL_SERVER}/call/inbound`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({caller_number: "browser-test"})
+      });
+      const data = await res.json();
+      log("Session: " + data.session_id);
+      log("Room: " + data.room_name);
+
+      // Connect to LiveKit room
+      room = new LivekitClient.Room();
+
+      room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+        if (track.kind === "audio") {
+          log("Agent audio received — attaching...");
+          const el = track.attach();
+          document.body.appendChild(el);
+        }
+      });
+
+      room.on(LivekitClient.RoomEvent.Disconnected, () => {
+        log("Call ended.");
+        document.getElementById("status").textContent = "Disconnected";
+        document.getElementById("endBtn").disabled = true;
+        document.getElementById("startBtn").disabled = false;
+      });
+
+      await room.connect(data.livekit_url, data.caller_token);
+      log("Connected to room.");
+
+      // Publish microphone
+      await room.localParticipant.setMicrophoneEnabled(true);
+      log("Microphone enabled — speak now!");
+
+      document.getElementById("status").textContent = "On call";
+      document.getElementById("endBtn").disabled = false;
+    };
+
+    document.getElementById("endBtn").onclick = async () => {
+      if (room) await room.disconnect();
+      document.getElementById("endBtn").disabled = true;
+      document.getElementById("startBtn").disabled = false;
+      document.getElementById("status").textContent = "Ready";
+    };
+  </script>
+</body>
+</html>
