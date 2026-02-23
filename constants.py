@@ -1,4 +1,5 @@
-# constants.py
+# constants.py — Single source of truth for all vocabulary
+
 KNOWN_ITEMS = {
     "rice", "wheat", "sugar", "oil", "dal", "flour",
     "salt", "atta", "maida", "sooji", "poha", "tea",
@@ -8,6 +9,7 @@ KNOWN_ITEMS = {
     "onion", "potato", "tomato", "garlic", "ginger",
     "carrot", "cabbage", "brinjal", "spinach", "peas",
     "lemon", "coconut", "groundnut", "soya", "corn",
+    "maggi", "curd", "namkeen", "noodles",
 }
 
 UNIT_CANONICAL = {
@@ -50,15 +52,27 @@ STOP_WORDS = {
 }
 
 AFFIRM_WORDS = {
+    # English
     "yes", "yeah", "yep", "yup", "correct", "right",
     "ok", "okay", "sure", "confirm", "absolutely", "definitely",
-    "fine", "agreed", "proceed", "haan", "bilkul",
+    "fine", "agreed", "proceed", "go", "do",
+    # Hindi transliteration
+    "haan", "ha", "haa", "bilkul", "theek", "theekhai",
+    "zaroor", "sahi", "karo", "jodo",
+    # Hindi Devanagari
+    "हाँ", "हां", "हा", "जी", "बिल्कुल", "ठीक है",
+    "ज़रूर", "सही", "करो", "जोड़ो", "हो जाए",
 }
 
 DENY_WORDS = {
+    # English
     "no", "nope", "nah", "cancel", "wrong", "incorrect",
-    "dont", "not", "stop", "wait", "hold",
-    "different", "mistake", "error", "nahi",
+    "dont", "not", "stop", "wait", "hold", "different",
+    "mistake", "error", "drop", "skip",
+    # Hindi transliteration
+    "nahi", "nahin", "mat", "ruko", "band",
+    # Hindi Devanagari
+    "नहीं", "नही", "मत", "रुको", "बंद", "गलत",
 }
 
 ACCUMULATE_WORDS = {
@@ -72,7 +86,7 @@ EXIT_WORDS = {
 
 SHOW_CART_WORDS = {
     "show", "cart", "list", "display",
-    "review", "summary",
+    "review", "summary", "items",
 }
 
 CONFIRM_ORDER_WORDS = {

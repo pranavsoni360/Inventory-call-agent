@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ration Agent — Voice Test</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 24px;
+        }
+
+        h1 { font-size: 1.5rem; font-weight: 600; color: #f8fafc; margin-bottom: 4px; }
+        .subtitle { font-size: 0.85rem; color: #64748b; margin-bottom: 24px; }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* Audio unlock banner */
+        .audio-unlock {
+            display: none;
+            background: #f59e0b;
+            color: #000;
+            padding: 12px 16px;
+            border-radius: 12px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            animation: pulse-yellow 1s infinite;
+        }
+        @keyframes pulse-yellow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.4); }
+            50%       { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+        }
+
+        .status-bar {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.85rem;
+        }
+
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #64748b;
+            flex-shrink: 0;
+            transition: background 0.3s;
+        }
+        .status-dot.connected     { background: #22c55e; }
+        .status-dot.listening     { background: #3b82f6; animation: pulse 1s infinite; }
+        .status-dot.speaking_user { background: #f59e0b; animation: pulse 0.4s infinite; }
+        .status-dot.processing    { background: #f59e0b; animation: pulse 0.5s infinite; }
+        .status-dot.speaking      { background: #a855f7; animation: pulse 0.8s infinite; }
+        .status-dot.error         { background: #ef4444; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.3; }
+        }
+
+        .visualizer {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            padding: 12px 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .viz-bar {
+            width: 4px;
+            background: #334155;
+            border-radius: 2px;
+            height: 6px;
+            transition: height 0.08s ease, background 0.2s;
+        }
+        .viz-bar.active   { background: #3b82f6; }
+        .viz-bar.speaking { background: #a855f7; }
+        .viz-bar.hearing  { background: #f59e0b; }
+
+        .viz-label {
+            position: absolute;
+            font-size: 0.72rem;
+            color: #475569;
+            bottom: 6px;
+            right: 10px;
+        }
+
+        .chat-window {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            height: 300px;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            max-width: 82%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            animation: fadeIn 0.2s ease;
+            white-space: pre-wrap;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.agent { background: #1d4ed8; color: #fff; align-self: flex-start; border-bottom-left-radius: 4px; }
+        .message.user  { background: #334155; color: #e2e8f0; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .message.info  { background: #1c1917; color: #78716c; align-self: center; font-size: 0.75rem; padding: 5px 12px; border-radius: 20px; }
+
+        .cart-panel {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 14px 16px;
+        }
+
+        .cart-title { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 10px; }
+        .cart-empty { font-size: 0.85rem; color: #475569; text-align: center; padding: 6px 0; }
+
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid #0f172a;
+            font-size: 0.85rem;
+        }
+        .cart-item:last-child { border-bottom: none; }
+        .cart-item-name { color: #e2e8f0; text-transform: capitalize; }
+        .cart-item-qty  { color: #94a3b8; font-size: 0.78rem; background: #0f172a; padding: 2px 8px; border-radius: 20px; }
+
+        .phase-badge {
+            font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.05em; padding: 2px 8px; border-radius: 20px;
+            background: #0f172a; color: #64748b; margin-left: auto;
+        }
+
+        .controls { display: flex; gap: 10px; }
+
+        .btn-start {
+            flex: 1;
+            height: 56px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #16a34a;
+            color: white;
+        }
+        .btn-start:hover         { background: #15803d; }
+        .btn-start.active        { background: #dc2626; animation: pulse-btn 1.2s infinite; }
+        .btn-start.active:hover  { background: #b91c1c; }
+        .btn-start:disabled      { background: #334155; color: #64748b; cursor: not-allowed; animation: none; }
+
+        @keyframes pulse-btn {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
+            50%       { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+        }
+
+        .btn-reset {
+            height: 56px; width: 56px;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            background: #1e293b;
+            color: #94a3b8;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-reset:hover { background: #334155; color: #e2e8f0; }
+
+        .text-input-row { display: flex; gap: 8px; }
+
+        .text-input {
+            flex: 1;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 10px 14px;
+            color: #e2e8f0;
+            font-size: 0.875rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .text-input:focus        { border-color: #3b82f6; }
+        .text-input::placeholder { color: #475569; }
+
+        .btn-send {
+            height: 42px; padding: 0 16px;
+            background: #1d4ed8; border: none; border-radius: 10px;
+            color: white; font-size: 0.875rem; font-weight: 600;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .btn-send:hover { background: #2563eb; }
+
+        .vad-hint { font-size: 0.72rem; color: #475569; text-align: center; }
+    </style>
+</head>
+<body>
+
+<h1>🌾 Ration Ordering Agent</h1>
+<p class="subtitle">Speak naturally — auto voice detection enabled</p>
+
+<div class="container">
+
+    <!-- Audio unlock banner — shown if Chrome blocks autoplay -->
+    <div class="audio-unlock" id="audioUnlock" onclick="unlockAudio()">
+        👆 Click here to enable audio playback
+    </div>
+
+    <div class="status-bar">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Connecting...</span>
+        <span class="phase-badge" id="phaseBadge">IDLE</span>
+    </div>
+
+    <div class="visualizer" id="visualizer">
+        <span class="viz-label" id="vizLabel">—</span>
+    </div>
+
+    <div class="chat-window" id="chatWindow"></div>
+
+    <div class="cart-panel">
+        <div class="cart-title">🛒 Cart</div>
+        <div id="cartItems"><div class="cart-empty">Cart is empty</div></div>
+    </div>
+
+    <div class="controls">
+        <button class="btn-start" id="btnStart" onclick="toggleListening()">
+            🎙️ Start Listening
+        </button>
+        <button class="btn-reset" onclick="resetSession()" title="Reset">🔄</button>
+    </div>
+
+    <span class="vad-hint">Agent detects when you speak and stop — no button needed</span>
+
+    <div class="text-input-row">
+        <input class="text-input" id="textInput" type="text"
+            placeholder="Or type your message here..."
+            onkeydown="if(event.key==='Enter') sendText()" />
+        <button class="btn-send" onclick="sendText()">Send</button>
+    </div>
+
+</div>
+
+<script>
+    const API_BASE   = "http://localhost:8000";
+    const WS_BASE    = "ws://localhost:8000";
+    const SESSION_ID = "voice_test_" + Math.random().toString(36).slice(2, 8);
+
+    // VAD settings
+    let   SILENCE_THRESHOLD  = 12;
+    const SILENCE_DURATION   = 1400;
+    const MIN_SPEECH_MS      = 500;
+    const SPEECH_CONFIRM_MS  = 200;
+
+    let ws           = null;
+    let isListening  = false;
+    let isProcessing = false;
+    let isSpeaking   = false;
+
+    let audioContext  = null;
+    let analyser      = null;
+    let microphone    = null;
+    let mediaRecorder = null;
+    let audioChunks   = [];
+    let stream        = null;
+
+    // Shared AudioContext for playback — created once on first user gesture
+    let playbackContext  = null;
+    let audioUnlocked    = false;
+    let pendingAudio     = null;  // audio queued before unlock
+
+    let silenceTimer    = null;
+    let speechStartTime = null;
+    let hasSpeech       = false;
+    let vizBars         = [];
+
+    const chatWindow = document.getElementById("chatWindow");
+    const statusDot  = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const phaseBadge = document.getElementById("phaseBadge");
+    const btnStart   = document.getElementById("btnStart");
+    const cartItems  = document.getElementById("cartItems");
+    const textInput  = document.getElementById("textInput");
+    const vizLabel   = document.getElementById("vizLabel");
+    const visualizer = document.getElementById("visualizer");
+    const audioUnlockBanner = document.getElementById("audioUnlock");
+
+    // Build visualizer bars
+    for (let i = 0; i < 28; i++) {
+        const bar = document.createElement("div");
+        bar.className = "viz-bar";
+        visualizer.insertBefore(bar, vizLabel);
+        vizBars.push(bar);
+    }
+
+    // ── Audio unlock (Chrome autoplay policy fix) ─────────────────────────────
+
+    function ensurePlaybackContext() {
+        if (!playbackContext) {
+            playbackContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (playbackContext.state === "suspended") {
+            playbackContext.resume();
+        }
+        return playbackContext;
+    }
+
+    function unlockAudio() {
+        audioUnlockBanner.style.display = "none";
+        audioUnlocked = true;
+        ensurePlaybackContext();
+        // Play any audio that was queued before unlock
+        if (pendingAudio) {
+            playAudioBytes(pendingAudio);
+            pendingAudio = null;
+        }
+    }
+
+    // Unlock audio context on any user interaction
+    document.addEventListener("click", () => {
+        if (!audioUnlocked) {
+            audioUnlocked = true;
+            ensurePlaybackContext();
+            audioUnlockBanner.style.display = "none";
+            if (pendingAudio) {
+                playAudioBytes(pendingAudio);
+                pendingAudio = null;
+            }
+        }
+    }, { once: false });
+
+    // ── WebSocket ─────────────────────────────────────────────────────────────
+
+    function connect() {
+        setStatus("connecting", "Connecting...");
+        ws = new WebSocket(`${WS_BASE}/voice/${SESSION_ID}`);
+
+        ws.onopen = () => {
+            setStatus("connected", "Connected — click Start Listening");
+        };
+
+        ws.onmessage = (event) => {
+            handleMessage(JSON.parse(event.data));
+        };
+
+        ws.onclose = () => {
+            setStatus("error", "Disconnected — refresh page");
+            stopListening();
+        };
+
+        ws.onerror = (e) => {
+            console.error("[WS] Error:", e);
+            setStatus("error", "Connection error");
+        };
+    }
+
+    function handleMessage(data) {
+        console.log("[WS] Received:", data.type, data.text ? data.text.slice(0, 60) : "");
+
+        if (data.type === "agent_response") {
+            addMessage("agent", data.text);
+            updateCart(data.cart || []);
+            updatePhase(data.phase || "IDLE");
+            if (data.audio_b64) {
+                playAudio(data.audio_b64);
+            }
+        }
+        if (data.type === "transcript") {
+            addMessage("user", data.text);
+            setStatus("processing", "Agent is thinking...");
+        }
+        if (data.type === "info") {
+            addMessage("info", data.message);
+            isProcessing = false;
+            if (isListening && !isSpeaking) resumeRecording();
+        }
+    }
+
+    // ── Start / Stop listening ────────────────────────────────────────────────
+
+    async function toggleListening() {
+        if (isListening) stopListening();
+        else await startListening();
+    }
+
+    async function startListening() {
+        // Unlock audio context on this user gesture
+        unlockAudio();
+
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+            });
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            analyser     = audioContext.createAnalyser();
+            microphone   = audioContext.createMediaStreamSource(stream);
+
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = 0.6;
+            microphone.connect(analyser);
+
+            isListening = true;
+
+            btnStart.textContent = "🔴 Stop Listening";
+            btnStart.classList.add("active");
+            setStatus("listening", "Calibrating mic...");
+            vizLabel.textContent = "Calibrating...";
+
+            await calibrateNoise();
+
+            setStatus("listening", "Listening — speak now...");
+            vizLabel.textContent = "Listening";
+            startVADLoop();
+
+        } catch (err) {
+            console.error("[Mic]", err);
+            addMessage("info", "Microphone access denied. Use the text input below.");
+            setStatus("error", "Mic unavailable");
+        }
+    }
+
+    async function calibrateNoise() {
+        return new Promise(resolve => {
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            let readings = [];
+            let count    = 0;
+
+            const interval = setInterval(() => {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i];
+                readings.push(Math.sqrt(sum / dataArray.length));
+                count++;
+
+                if (count >= 15) {
+                    clearInterval(interval);
+                    const noiseFloor  = readings.reduce((a, b) => a + b, 0) / readings.length;
+                    SILENCE_THRESHOLD = Math.max(8, noiseFloor * 2.2);
+                    console.log(`[VAD] Noise floor: ${noiseFloor.toFixed(2)}, threshold: ${SILENCE_THRESHOLD.toFixed(2)}`);
+                    resolve();
+                }
+            }, 100);
+        });
+    }
+
+    function stopListening() {
+        isListening = false;
+        btnStart.textContent = "🎙️ Start Listening";
+        btnStart.classList.remove("active");
+        setStatus("connected", "Stopped — click Start to resume");
+        vizLabel.textContent = "—";
+
+        clearTimeout(silenceTimer);
+        clearTimeout(window._speechConfirmTimer);
+        window._speechConfirmTimer = null;
+
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.onstop = null;
+            mediaRecorder.stop();
+        }
+
+        if (stream)       { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        if (audioContext) { audioContext.close(); audioContext = null; }
+
+        vizBars.forEach(b => { b.style.height = "6px"; b.className = "viz-bar"; });
+        hasSpeech = false;
+    }
+
+    function resumeRecording() {
+        if (!isListening || !stream || isSpeaking) return;
+        hasSpeech = false;
+        startRecordingChunk();
+        setStatus("listening", "Listening — speak now...");
+        vizLabel.textContent = "Listening";
+    }
+
+    // ── VAD Loop ──────────────────────────────────────────────────────────────
+
+    function startVADLoop() {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        hasSpeech = false;
+        startRecordingChunk();
+
+        function loop() {
+            if (!isListening) return;
+
+            analyser.getByteFrequencyData(dataArray);
+
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i];
+            const rms = Math.sqrt(sum / dataArray.length);
+
+            // Update visualizer bars
+            vizBars.forEach((bar, i) => {
+                const idx    = Math.floor(i * dataArray.length / vizBars.length);
+                const height = Math.max(4, (dataArray[idx] / 255) * 56);
+                bar.style.height = height + "px";
+
+                if (isSpeaking)     bar.className = "viz-bar speaking";
+                else if (hasSpeech) bar.className = "viz-bar hearing";
+                else if (rms > SILENCE_THRESHOLD) bar.className = "viz-bar active";
+                else                bar.className = "viz-bar";
+            });
+
+            if (isProcessing || isSpeaking) {
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            if (rms > SILENCE_THRESHOLD) {
+                // Confirm real speech (not click/noise)
+                if (!hasSpeech && !window._speechConfirmTimer) {
+                    window._speechConfirmTimer = setTimeout(() => {
+                        hasSpeech            = true;
+                        speechStartTime      = Date.now();
+                        vizLabel.textContent = "Speaking...";
+                        setStatus("speaking_user", "Hearing you...");
+                        window._speechConfirmTimer = null;
+                    }, SPEECH_CONFIRM_MS);
+                }
+
+                clearTimeout(silenceTimer);
+                if (hasSpeech) {
+                    silenceTimer = setTimeout(() => {
+                        const duration = Date.now() - speechStartTime;
+                        if (duration >= MIN_SPEECH_MS) {
+                            sendAudioChunk();
+                        } else {
+                            hasSpeech            = false;
+                            startRecordingChunk();
+                            setStatus("listening", "Listening — speak now...");
+                            vizLabel.textContent = "Listening";
+                        }
+                    }, SILENCE_DURATION);
+                }
+            } else {
+                // Silence — cancel confirmation if speech not confirmed yet
+                if (!hasSpeech) {
+                    clearTimeout(window._speechConfirmTimer);
+                    window._speechConfirmTimer = null;
+                }
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    // ── Recording ─────────────────────────────────────────────────────────────
+
+    function startRecordingChunk() {
+        if (!stream) return;
+        audioChunks = [];
+
+        try {
+            mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+        } catch (e) {
+            mediaRecorder = new MediaRecorder(stream);
+        }
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        try { mediaRecorder.start(80); } catch (e) { console.warn("[Recorder]", e); }
+    }
+
+    function sendAudioChunk() {
+        if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+
+        mediaRecorder.onstop = async () => {
+            if (audioChunks.length === 0) {
+                resumeRecording();
+                return;
+            }
+
+            const blob        = new Blob(audioChunks, { type: "audio/webm" });
+            const arrayBuffer = await blob.arrayBuffer();
+            const base64      = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+            isProcessing         = true;
+            hasSpeech            = false;
+            audioChunks          = [];
+            setStatus("processing", "Transcribing...");
+            vizLabel.textContent = "Processing...";
+
+            ws.send(JSON.stringify({ type: "audio", audio_b64: base64 }));
+        };
+
+        mediaRecorder.stop();
+    }
+
+    // ── Audio playback (AudioContext-based — bypasses autoplay block) ──────────
+
+    function playAudio(base64) {
+        if (!base64) return;
+
+        // Decode base64 → ArrayBuffer
+        const binary = atob(base64);
+        const bytes  = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+        if (!audioUnlocked) {
+            // Queue audio and show unlock banner
+            pendingAudio = bytes.buffer;
+            audioUnlockBanner.style.display = "block";
+            return;
+        }
+
+        playAudioBytes(bytes.buffer);
+    }
+
+    function playAudioBytes(arrayBuffer) {
+        isSpeaking   = true;
+        isProcessing = false;
+        setStatus("speaking", "Agent is speaking...");
+        vizLabel.textContent = "Agent speaking...";
+
+        const ctx = ensurePlaybackContext();
+
+        ctx.decodeAudioData(arrayBuffer.slice(0), (audioBuffer) => {
+            const source = ctx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(ctx.destination);
+
+            source.onended = () => {
+                isSpeaking   = false;
+                isProcessing = false;
+                if (isListening) resumeRecording();
+                else {
+                    setStatus("connected", "Click Start to continue");
+                    vizLabel.textContent = "—";
+                }
+            };
+
+            source.start(0);
+            console.log("[Audio] Playing via AudioContext");
+
+        }, (err) => {
+            console.error("[Audio] Decode failed:", err);
+            // Fallback to Audio element
+            const blob  = new Blob([arrayBuffer], { type: "audio/wav" });
+            const url   = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.onended = () => {
+                URL.revokeObjectURL(url);
+                isSpeaking   = false;
+                isProcessing = false;
+                if (isListening) resumeRecording();
+            };
+            audio.play().catch(e => {
+                console.error("[Audio] Fallback play failed:", e);
+                isSpeaking   = false;
+                isProcessing = false;
+                if (isListening) resumeRecording();
+            });
+        });
+    }
+
+    // ── UI helpers ────────────────────────────────────────────────────────────
+
+    function addMessage(role, text) {
+        const div       = document.createElement("div");
+        div.className   = `message ${role}`;
+        div.textContent = text;
+        chatWindow.appendChild(div);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    function updateCart(items) {
+        if (!items || items.length === 0) {
+            cartItems.innerHTML = '<div class="cart-empty">Cart is empty</div>';
+            return;
+        }
+        cartItems.innerHTML = items.map(item => `
+            <div class="cart-item">
+                <span class="cart-item-name">${item.name}</span>
+                <span class="cart-item-qty">${item.quantity} ${item.unit}</span>
+            </div>
+        `).join("");
+    }
+
+    function updatePhase(phase) { phaseBadge.textContent = phase; }
+
+    function setStatus(state, text) {
+        statusDot.className    = `status-dot ${state}`;
+        statusText.textContent = text;
+    }
+
+    function sendText() {
+        const message = textInput.value.trim();
+        if (!message || isProcessing) return;
+        unlockAudio();  // unlock on text send too
+        isProcessing    = true;
+        textInput.value = "";
+        setStatus("processing", "Agent is thinking...");
+        ws.send(JSON.stringify({ type: "text", message }));
+    }
+
+    async function resetSession() {
+        stopListening();
+        await fetch(`${API_BASE}/session/${SESSION_ID}`, { method: "DELETE" });
+        chatWindow.innerHTML   = "";
+        cartItems.innerHTML    = '<div class="cart-empty">Cart is empty</div>';
+        phaseBadge.textContent = "IDLE";
+        pendingAudio           = null;
+        audioUnlockBanner.style.display = "none";
+        if (ws) ws.close();
+        connect();
+    }
+
+    connect();
+</script>
+</body>
+</html>

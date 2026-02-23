@@ -25,8 +25,6 @@ from constants import (
 from conversation_state import ConversationState, Phase
 
 
-# ── Result type ───────────────────────────────────────────────────────────────
-
 @dataclass
 class IntentResult:
     intent:   str
@@ -34,91 +32,92 @@ class IntentResult:
     llm_used: bool = False
 
 
-# ── Vocabulary sets ───────────────────────────────────────────────────────────
-
 ACKNOWLEDGEMENTS = {
     "okay", "ok", "alright", "great", "fine", "cool", "sure",
     "thanks", "thank", "nice", "good", "perfect", "wonderful",
     "aight", "gotcha", "noted", "understood", "makes sense",
+    # Hindi transliteration
+    "theek", "accha", "acha", "shukriya", "dhanyawad",
 }
 
 IDLE_DEAD_ENDS = {
-    "no", "nope", "nah", "nothing", "nevermind", "never", "mind",
-    "forget", "leave", "drop", "skip", "ignore",
+    "nothing", "nevermind", "never", "mind",
+    "forget", "leave", "ignore",
 }
 
+# Hindi Devanagari affirmation tokens (single words)
+HINDI_AFFIRM = {"हाँ", "हां", "हा", "जी", "बिल्कुल", "ज़रूर", "करो", "जोड़ो"}
+HINDI_DENY   = {"नहीं", "नही", "मत", "रुको", "बंद", "गलत"}
 
-# ── Main entry point ──────────────────────────────────────────────────────────
 
 def decide(user_input: str, state: ConversationState) -> IntentResult:
-    text   = user_input.lower().strip()
-    tokens = set(text.split())
+    import string
+    text   = user_input.strip()
+    lower  = text.lower()
+    # Strip punctuation from each token so "yes." "yes," "yes!" all match
+    tokens = set(w.strip(string.punctuation) for w in lower.split())
+
+    # ── Hindi token check (Devanagari) ────────────────────────────────────────
+    text_tokens = set(text.split())
 
     # ── Phase: AWAITING_CONFIRM ───────────────────────────────────────────────
     if state.phase == Phase.AWAITING_CONFIRM:
-        if tokens & AFFIRM_WORDS:
-            return IntentResult(intent="user_confirmed", raw_text=text)
-        if tokens & DENY_WORDS:
-            return IntentResult(intent="user_denied", raw_text=text)
-        return IntentResult(intent="confirmation_unclear", raw_text=text)
+        if (tokens & AFFIRM_WORDS) or (text_tokens & HINDI_AFFIRM):
+            return IntentResult(intent="user_confirmed", raw_text=lower)
+        if (tokens & DENY_WORDS) or (text_tokens & HINDI_DENY):
+            return IntentResult(intent="user_denied", raw_text=lower)
+        return IntentResult(intent="confirmation_unclear", raw_text=lower)
 
     # ── Phase: SLOT_FILLING ───────────────────────────────────────────────────
     if state.phase == Phase.SLOT_FILLING:
         if tokens & EXIT_WORDS:
-            return IntentResult(intent="exit", raw_text=text)
-        if tokens & DENY_WORDS:
-            return IntentResult(intent="user_denied", raw_text=text)
-        return IntentResult(intent="slot_response", raw_text=text)
+            return IntentResult(intent="exit", raw_text=lower)
+        if (tokens & DENY_WORDS) or (text_tokens & HINDI_DENY):
+            return IntentResult(intent="user_denied", raw_text=lower)
+        return IntentResult(intent="slot_response", raw_text=lower)
 
     # ── Phase: IDLE ───────────────────────────────────────────────────────────
 
-    # Exit
     if tokens & EXIT_WORDS:
-        return IntentResult(intent="exit", raw_text=text)
+        return IntentResult(intent="exit", raw_text=lower)
 
-    # Show cart
     if tokens & SHOW_CART_WORDS:
-        return IntentResult(intent="show_cart", raw_text=text)
+        return IntentResult(intent="show_cart", raw_text=lower)
 
-    # Confirm order
     if tokens & CONFIRM_ORDER_WORDS:
-        return IntentResult(intent="confirm_order", raw_text=text)
+        return IntentResult(intent="confirm_order", raw_text=lower)
 
-    # Greeting — short inputs only
-    if tokens & {"hello", "hi", "hey", "heya", "hiya"} and len(tokens) <= 3:
-        return IntentResult(intent="greeting", raw_text=text)
+    if tokens & {"hello", "hi", "hey", "heya", "hiya", "namaste", "namaskar"} and len(tokens) <= 4:
+        return IntentResult(intent="greeting", raw_text=lower)
 
-    # Acknowledgements and dead-ends — never hit LLM for these
-    if tokens & (ACKNOWLEDGEMENTS | IDLE_DEAD_ENDS) and not (tokens & KNOWN_ITEMS) and not re.search(r'\d', text):
-        return IntentResult(intent="acknowledgement", raw_text=text)
+    if tokens & (ACKNOWLEDGEMENTS | IDLE_DEAD_ENDS) and not (tokens & KNOWN_ITEMS) and not re.search(r'\d', lower):
+        return IntentResult(intent="acknowledgement", raw_text=lower)
 
-    # Remove item
     if tokens & REMOVE_WORDS:
-        return IntentResult(intent="remove_item", raw_text=text)
+        return IntentResult(intent="remove_item", raw_text=lower)
 
-    # Update item
     if tokens & UPDATE_WORDS:
-        return IntentResult(intent="update_item", raw_text=text)
+        return IntentResult(intent="update_item", raw_text=lower)
 
-    # Digits or known units → add_item
-    if re.search(r'\d', text):
-        return IntentResult(intent="add_item", raw_text=text)
+    if re.search(r'\d', lower):
+        return IntentResult(intent="add_item", raw_text=lower)
 
     if tokens & KNOWN_UNITS:
-        return IntentResult(intent="add_item", raw_text=text)
+        return IntentResult(intent="add_item", raw_text=lower)
 
-    # Known item word → add_item
     if tokens & KNOWN_ITEMS:
-        return IntentResult(intent="add_item", raw_text=text)
+        return IntentResult(intent="add_item", raw_text=lower)
 
-    # ── LLM fallback — only for genuinely ambiguous inputs ───────────────────
+    # Direct known item name — always add_item
+    if tokens & KNOWN_ITEMS:
+        return IntentResult(intent="add_item", raw_text=lower)
+
+    # ── LLM fallback ─────────────────────────────────────────────────────────
     if state.llm_calls >= MAX_LLM_CALLS_PER_SESSION:
-        return IntentResult(intent="clarify", raw_text=text)
+        return IntentResult(intent="clarify", raw_text=lower)
 
-    return _llm_classify(text, state)
+    return _llm_classify(lower, state)
 
-
-# ── LLM classifier ────────────────────────────────────────────────────────────
 
 def _llm_classify(text: str, state: ConversationState) -> IntentResult:
     allowed_intents = [
@@ -133,18 +132,13 @@ def _llm_classify(text: str, state: ConversationState) -> IntentResult:
     ]
 
     prompt = f"""You are an intent classifier for a ration ordering phone agent.
-Classify the user message into exactly one intent.
+Works in Hindi and English. Classify the user message into exactly one intent.
 
 Current cart: {cart_summary if cart_summary else 'empty'}
 User message: "{text}"
 
-Respond with ONLY valid JSON, no explanation, no markdown:
+Respond with ONLY valid JSON:
 {{"intent": "<one of: {', '.join(allowed_intents)}>"}}"""
-
-    from shared.utils.rate_limiter import gemini_limiter
-    if not gemini_limiter.acquire():
-        logger.warning("[DecisionEngine] Rate limited — returning clarify")
-        return IntentResult(intent="clarify", raw_text=text, llm_used=False)
 
     try:
         from groq import Groq
@@ -155,19 +149,15 @@ Respond with ONLY valid JSON, no explanation, no markdown:
             temperature=0,
             max_tokens=50,
         )
-
         raw    = response.choices[0].message.content.strip()
         raw    = raw.replace("```json", "").replace("```", "").strip()
         parsed = json.loads(raw)
         intent = parsed.get("intent", "clarify")
-
         if intent not in allowed_intents:
             intent = "clarify"
-
         state.llm_calls += 1
-        logger.info(f"[DecisionEngine] LLM classified: {text!r} → {intent}")
+        logger.info(f"[DecisionEngine] LLM: {text!r} → {intent}")
         return IntentResult(intent=intent, raw_text=text, llm_used=True)
-
     except Exception as e:
         logger.warning(f"[DecisionEngine] LLM error: {e}")
         return IntentResult(intent="clarify", raw_text=text, llm_used=True)

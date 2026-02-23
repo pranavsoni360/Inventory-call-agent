@@ -108,16 +108,103 @@ def parse_item(raw_text: str) -> ParseResult:
 # ── Normalizer ────────────────────────────────────────────────────────────────
 
 def _normalize(text: str) -> str:
+    import string
     text = text.lower().strip()
+    # Strip punctuation from each word so "sugar." "oil," "milk!" all parse correctly
+    text = " ".join(w.strip(string.punctuation) for w in text.split())
     text = re.sub(r'\s+', ' ', text)
 
     number_words = {
         "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
         "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
         "half": "0.5", "quarter": "0.25",
+        "ek": "1", "do": "2", "teen": "3", "char": "4", "paanch": "5",
+        "chhe": "6", "saat": "7", "aath": "8", "nau": "9", "das": "10",
     }
     for word, digit in number_words.items():
         text = re.sub(rf'\b{word}\b', digit, text)
+
+    # Hindi / transliteration item name mappings
+    hindi_items = {
+        # Grains
+        "chawal": "rice", "chaawal": "rice", "चावल": "rice",
+        "gehu": "wheat", "gehun": "wheat", "गेहूं": "wheat",
+        "makki": "corn", "makai": "corn", "मक्का": "corn",
+        "jowar": "jowar", "bajra": "bajra", "ragi": "ragi",
+        # Pulses
+        "daal": "dal", "dhal": "dal", "दाल": "dal",
+        "chana": "besan", "chanay": "besan",
+        # Sugar & Salt
+        "cheeni": "sugar", "shakkar": "sugar", "chini": "sugar",
+        "शक्कर": "sugar", "चीनी": "sugar", "शुगर": "sugar",
+        "namak": "salt", "नमक": "salt",
+        # Oils
+        "tel": "oil", "sarson ka tel": "mustard oil", "तेल": "oil",
+        # Dairy
+        "dudh": "milk", "दूध": "milk",
+        "dahi": "curd",
+        # Spices
+        "haldi": "turmeric", "हल्दी": "turmeric",
+        "mirch": "chilli", "मिर्च": "chilli",
+        "jeera": "cumin", "जीरा": "cumin",
+        "sarson": "mustard", "सरसों": "mustard",
+        "adrak": "ginger", "अदरक": "ginger",
+        "lahsun": "garlic", "लहसुन": "garlic",
+        # Vegetables
+        "aloo": "potato", "aaloo": "potato", "आलू": "potato",
+        "pyaaz": "onion", "pyaz": "onion", "प्याज": "onion",
+        "tamatar": "tomato", "टमाटर": "tomato",
+        "palak": "spinach", "पालक": "spinach",
+        "gajar": "carrot", "गाजर": "carrot",
+        "gobhi": "cabbage", "gobi": "cabbage", "गोभी": "cabbage",
+        "matar": "peas", "मटर": "peas",
+        "brinjal": "brinjal", "baingan": "brinjal", "बैंगन": "brinjal",
+        # Other
+        "atta": "atta", "आटा": "atta",
+        "maida": "maida", "मैदा": "maida",
+        "sooji": "sooji", "suji": "sooji",
+        "poha": "poha", "पोहा": "poha",
+        "chai": "tea", "चाय": "tea",
+        "nariyal": "coconut", "नारियल": "coconut",
+        "mungfali": "groundnut",
+        # Packaged
+        "maggi": "maggi", "नूडल्स": "maggi", "मैगी": "maggi",
+        "namkeen": "namkeen",
+    }
+
+    # Hindi filler words to remove
+    hindi_fillers = {
+        "थोड़ी", "थोड़ा", "थोड़े", "कुछ", "भी", "चाहिए",
+        "दीजिए", "देना", "करना", "वाला", "जरा",
+    }
+
+    for hindi, english in hindi_items.items():
+        text = re.sub(rf'(?<!\w){re.escape(hindi)}(?!\w)', english, text)
+
+    for filler in hindi_fillers:
+        text = re.sub(rf'(?<!\w){re.escape(filler)}(?!\w)', '', text)
+
+    # Clean up extra spaces after removals
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # Strip natural speech prefixes so parser can find the item
+    speech_prefixes = [
+        r"^i would like to order\s+",
+        r"^i want to order\s+",
+        r"^please add\s+",
+        r"^can you add\s+",
+        r"^add\s+",
+        r"^i need\s+",
+        r"^order\s+",
+        r"^mujhe\s+chahiye\s+",
+        r"^mujhe\s+",
+        r"^dena\s+",
+        r"^mujhe\s+",
+        r"^haan\s+",
+        r"^bhi\s+",
+    ]
+    for prefix in speech_prefixes:
+        text = re.sub(prefix, "", text)
 
     return text
 
@@ -198,8 +285,14 @@ def _tier2(text: str, result: ParseResult) -> ParseResult:
             result.unit = UNIT_CANONICAL[token]
             continue
 
-        if result.name is None and _is_valid_name(token):
-            result.name = token
+        if result.name is None:
+            # Check KNOWN_ITEMS first — direct match
+            if token in KNOWN_ITEMS:
+                result.name = token
+                continue
+            # Then general validity check
+            if _is_valid_name(token):
+                result.name = token
 
     return result
 
@@ -221,3 +314,33 @@ def _is_valid_name(word: str) -> bool:
     if not word.isalpha():
         return False
     return True
+
+
+def extract_items_with_llm(text: str) -> list[dict]:
+    """
+    Returns list of {name, quantity, unit} dicts from natural speech.
+    Used when regex parser fails on complex Hindi/mixed utterances.
+    """
+    try:
+        from groq import Groq
+        import os, json
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": f"""
+Extract all grocery items from this text. Text may be Hindi, English or mixed.
+Text: "{text}"
+Respond ONLY with JSON array:
+[{{"name": "rice", "quantity": 2.0, "unit": "kg"}}, ...]
+If quantity or unit unknown, use null.
+Common Hindi→English: चावल=rice, दाल=dal, शक्कर/चीनी=sugar, प्याज=onion, 
+अदरक=ginger, शेंगदाना/मूंगफली=groundnut, तेल=oil, आटा=atta
+"""}],
+            temperature=0,
+            max_tokens=200,
+        )
+        raw = response.choices[0].message.content.strip()
+        raw = raw.replace("```json","").replace("```","").strip()
+        return json.loads(raw)
+    except Exception:
+        return []

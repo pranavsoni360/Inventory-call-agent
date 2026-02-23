@@ -1,13 +1,16 @@
 # services/voice_agent/action_executor.py
 # The ONLY place state is mutated.
 # Receives IntentResult + ConversationState, returns response string.
-# For conversational turns, delegates response generation to Groq.
-
+import re
+from conversation_state import ConversationState, Phase
+from item_parser import parse_item
 import os
 import uuid
+import random
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+import random
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -16,46 +19,41 @@ from item_parser import parse_item
 from constants import MAX_CART_ITEMS
 
 
-# ── Smart conversational response via Groq ────────────────────────────────────
+# ── Groq conversational response (used sparingly) ─────────────────────────────
 
-def _groq_respond(user_text: str, state: ConversationState, context: str = "") -> str:
-    """
-    Generates a natural conversational response using Groq.
-    Used for greetings, acknowledgements, clarifications, and small talk.
-    Falls back to a simple default if Groq fails.
-    """
-    cart_summary = ", ".join(
-        f"{i['quantity']} {i['unit']} {i['name']}" for i in state.items
-    ) or "empty"
+def _groq_respond(user_text: str, state, context: str = "") -> str:
+    cart_summary = ""
+    if state:
+        cart_summary = ", ".join(
+            f"{i['quantity']} {i['unit']} {i['name']}" for i in state.items
+        ) or "empty"
 
     system = """You are a friendly ration ordering assistant on a phone call.
-You help customers place their monthly grocery orders.
+Help customers place their monthly grocery orders.
 Keep responses SHORT (1-2 sentences max), warm, and natural.
-If the customer is making small talk, respond naturally but gently guide them back to ordering.
-Never make up order details. Never confirm things the customer didn't say.
-Speak like a helpful human agent, not a robot."""
+Respond in the same language the customer used — Hindi or English.
+Never make up order details. Never confirm things the customer didn't say."""
 
-    user_prompt = f"""Customer said: "{user_text}"
-Current cart: {cart_summary}
+    user_prompt = f"""{f'Customer said: "{user_text}"' if user_text else ''}
+{f'Current cart: {cart_summary}' if cart_summary else ''}
 {f'Context: {context}' if context else ''}
 Respond naturally in 1-2 sentences."""
 
     try:
         from groq import Groq
-        client   = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user",   "content": user_prompt},
+                {"role": "user", "content": user_prompt},
             ],
             temperature=0.7,
             max_tokens=80,
         )
         return response.choices[0].message.content.strip()
-    except Exception as e:
+    except Exception:
         return context if context else "What items would you like to order today?"
-
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
@@ -65,7 +63,6 @@ def execute(intent_result, state: ConversationState) -> str:
 
     state.turn_count += 1
 
-    # ── Confirmation phase ────────────────────────────────────────────────────
     if intent == "user_confirmed":
         return _handle_confirmed(state)
 
@@ -75,71 +72,71 @@ def execute(intent_result, state: ConversationState) -> str:
     if intent == "confirmation_unclear":
         buf = state.slot_buffer
         if buf.is_order_confirm():
-            return _groq_respond(raw, state, "Ask them to say yes or no to confirm their full order.")
-        return _groq_respond(
-            raw, state,
-            f"Ask them to say yes or no to add {buf.quantity} {buf.unit} of {buf.name}."
-        )
+            return "Please say yes to confirm your order, or no to cancel."
+        return f"Please say yes or no — should I add {buf.quantity} {buf.unit} of {buf.name.title()}?"
 
-    # ── Slot filling ──────────────────────────────────────────────────────────
     if intent == "slot_response":
         return _handle_slot_response(raw, state)
 
-    # ── Cart display ──────────────────────────────────────────────────────────
     if intent == "show_cart":
         return _format_cart(state)
 
-    # ── Confirm full order ────────────────────────────────────────────────────
     if intent == "confirm_order":
         if not state.items:
-            return _groq_respond(raw, state, "Their cart is empty. Ask them to add items first.")
+            return "Your cart is empty. Please add some items first."
         state.slot_buffer.clear()
         state.slot_buffer.name = "__ORDER_CONFIRM__"
         state.force_transition(Phase.AWAITING_CONFIRM)
         return (
-            f"You want to place this order?\n"
-            f"{_format_cart_inline(state)}\n"
+            f"You want to place this order? "
+            f"{_format_cart_inline(state)}. "
             f"Say yes to confirm or no to cancel."
         )
 
-    # ── Greeting ──────────────────────────────────────────────────────────────
     if intent == "greeting":
-        return _groq_respond(raw, state, "Greet them warmly and ask what they'd like to order.")
+        greetings = [
+            "Hello! What items would you like to order this month?",
+            "Hi there! What can I add to your cart today?",
+            "Hey! Ready to place your ration order? What do you need?",
+        ]
+        return random.choice(greetings)
 
-    # ── Acknowledgement — smart contextual response ───────────────────────────
     if intent == "acknowledgement":
         cart_count = len(state.items)
         if cart_count == 0:
-            return _groq_respond(raw, state, "They acknowledged. Invite them to start ordering.")
-        return _groq_respond(
-            raw, state,
-            f"They acknowledged. They have {cart_count} item(s) in cart. Ask if they want to add more or confirm."
-        )
+            options = [
+                "Great! What would you like to add to your cart?",
+                "Sure! Go ahead and tell me what items you need.",
+                "Alright! What's first on your list?",
+            ]
+        else:
+            options = [
+                f"You have {cart_count} item(s) so far. Want to add more or confirm your order?",
+                f"Got it! Should I add anything else, or are you ready to confirm?",
+                f"Sure! Your cart has {cart_count} item(s). Continue adding or place the order?",
+            ]
+        return random.choice(options)
 
-    # ── Exit ──────────────────────────────────────────────────────────────────
     if intent == "exit":
         return "__EXIT__"
 
-    # ── Clarify — smart response instead of fixed string ─────────────────────
     if intent == "clarify":
+        # Use Groq only for clarify — it's genuinely ambiguous
         return _groq_respond(
             raw, state,
-            "You didn't understand. Politely ask them to clarify or suggest they say something like 'add 5 kg rice'."
+            "You didn't understand. Politely ask them to clarify or suggest 'add 5 kg rice'."
         )
 
-    # ── Add item ──────────────────────────────────────────────────────────────
     if intent == "add_item":
         return _handle_add_item(raw, state)
 
-    # ── Update item ───────────────────────────────────────────────────────────
     if intent == "update_item":
         return _handle_add_item(raw, state, is_update=True)
 
-    # ── Remove item ───────────────────────────────────────────────────────────
     if intent == "remove_item":
         return _handle_remove_item(raw, state)
 
-    return _groq_respond(raw, state, "Something unexpected happened. Ask them to repeat.")
+    return "Sorry, could you repeat that?"
 
 
 # ── Add / update item ─────────────────────────────────────────────────────────
@@ -149,10 +146,54 @@ def _handle_add_item(raw: str, state: ConversationState,
     if len(state.items) >= MAX_CART_ITEMS:
         return f"Your cart is full ({MAX_CART_ITEMS} items maximum)."
 
-    if " and " in raw:
-        raw = raw.split(" and ")[0].strip()
+    # Split on "and", commas, "aur", "और" — handles Hindi multi-item utterances
+    parts = [p.strip() for p in re.split(r'\band\b|,|aur|और', raw) if p.strip()]
+
+    if len(parts) > 1 and not state.slot_buffer.name:
+        pending_entry = next(
+            (h for h in state.history if h.get("speaker") == "__pending__"),
+            None
+        )
+        if pending_entry:
+            pending_entry["items"] = parts[1:] + pending_entry.get("items", [])
+        else:
+            state.history.append({"speaker": "__pending__", "items": parts[1:]})
+        raw = parts[0]
 
     parsed = parse_item(raw)
+
+    # LLM fallback if parser got nothing on complex Hindi/mixed input
+    if not parsed.has_any() and len(raw.split()) >= 1:
+        from item_parser import extract_items_with_llm
+        llm_items = extract_items_with_llm(raw)
+        if llm_items:
+            first = llm_items[0]
+            rest  = llm_items[1:]
+            if rest:
+                rest_texts = [
+                    f"{i.get('quantity') or ''} {i.get('unit') or ''} {i['name']}".strip()
+                    for i in rest
+                ]
+                pending_entry = next(
+                    (h for h in state.history if h.get("speaker") == "__pending__"),
+                    None
+                )
+                if pending_entry:
+                    pending_entry["items"] = rest_texts + pending_entry.get("items", [])
+                else:
+                    state.history.append({"speaker": "__pending__", "items": rest_texts})
+            # Apply first item to slot buffer
+            if first.get("name")     and not state.slot_buffer.name:
+                state.slot_buffer.name     = first["name"]
+            if first.get("quantity") and not state.slot_buffer.quantity:
+                state.slot_buffer.quantity = float(first["quantity"])
+            if first.get("unit")     and not state.slot_buffer.unit:
+                state.slot_buffer.unit     = first["unit"]
+            # Re-parse to get confidence set correctly
+            parsed = parse_item(
+                f"{first.get('quantity') or ''} {first.get('unit') or ''} {first.get('name') or ''}".strip()
+            )
+
     state.slot_buffer.merge_from_parse(parsed)
     if is_update:
         state.slot_buffer.is_update = True
@@ -173,6 +214,7 @@ def _handle_add_item(raw: str, state: ConversationState,
     return _ask_for_missing(state.slot_buffer)
 
 
+
 def _handle_slot_response(raw: str, state: ConversationState) -> str:
     parsed = parse_item(raw)
     state.slot_buffer.merge_from_parse(parsed)
@@ -191,36 +233,36 @@ def _handle_slot_response(raw: str, state: ConversationState) -> str:
 
 
 def _ask_for_missing(buf: SlotBuffer) -> str:
-    slot    = buf.next_missing()
-    attempt = getattr(buf, '_ask_count', 0)
-    buf._ask_count = attempt + 1
+    slot = buf.next_missing()
+    name = buf.name.title() if buf.name else None
+    qty  = buf.quantity
+    unit = buf.unit
 
     if slot == "name":
         options = [
-            "Which item would you like to add?",
-            "What item did you have in mind?",
-            "Could you tell me the item name? For example — rice, dal, or sugar.",
+            "Which item would you like to add? For example rice, dal, sugar, or oil.",
+            "What grocery item did you want? I can add rice, dal, wheat, sugar and more.",
+            "Could you tell me the item name?",
         ]
-        return options[min(attempt, len(options) - 1)]
+        return random.choice(options)
 
     if slot == "quantity":
-        name = buf.name.title() if buf.name else "that item"
         options = [
-            f"How much {name} would you like?",
+            f"How much {name} would you like? For example 2 kg or 500 grams.",
             f"What quantity of {name} do you need?",
-            f"Please tell me the amount of {name} — for example, 5 or 2.5.",
+            f"How many kg or packets of {name}?",
         ]
-        return options[min(attempt, len(options) - 1)]
+        return random.choice(options)
 
     if slot == "unit":
         options = [
-            "In what unit? For example: kg, gram, litre, or packet.",
-            "Should that be in kg, grams, litres, or packets?",
-            "Please specify the unit — kg, gram, litre, packet, or piece.",
+            f"Should that be in kg, grams, litres, or packets?",
+            f"What unit for {name} — kg, gram, litre, or packet?",
         ]
-        return options[min(attempt, len(options) - 1)]
+        return random.choice(options)
 
-    return "Could you clarify your order? Try something like '5 kg rice'."
+    return "Could you clarify? Try something like '5 kg rice'."
+
 
 
 # ── Confirmation handlers ─────────────────────────────────────────────────────
@@ -240,7 +282,6 @@ def _handle_confirmed(state: ConversationState) -> str:
     quantity      = buf.quantity
     unit          = buf.unit
     is_accumulate = buf.is_accumulate
-    is_update     = buf.is_update
 
     existing = next((i for i in state.items if i["name"] == name), None)
 
@@ -254,13 +295,28 @@ def _handle_confirmed(state: ConversationState) -> str:
         else:
             existing["quantity"] = quantity
             existing["unit"]     = unit
-            msg = f"Got it, updated {name.title()} to {quantity} {unit}."
+            msg = f"Updated {name.title()} to {quantity} {unit}."
     else:
         state.items.append({"name": name, "quantity": quantity, "unit": unit})
         msg = f"Perfect! {quantity} {unit} of {name.title()} added to your cart."
 
     buf.clear()
     state.transition(Phase.IDLE)
+
+    # Don't inline — store next item to process on next agent turn
+    pending_entry = None
+    for h in state.history:
+        if h.get("speaker") == "__pending__" and h.get("items"):
+            pending_entry = h
+            break
+
+    if pending_entry:
+        next_raw = pending_entry["items"].pop(0)
+        if not pending_entry["items"]:
+            state.history.remove(pending_entry)
+        # Tag it so main.py sends it as a follow-up after a pause
+        state.history.append({"speaker": "__followup__", "text": next_raw})
+
     return msg
 
 
@@ -270,7 +326,7 @@ def _handle_denied(state: ConversationState) -> str:
     if buf.is_order_confirm():
         buf.clear()
         state.force_transition(Phase.IDLE)
-        return "No problem, order not placed. Your cart is still saved. What would you like to do?"
+        return "No problem, order not placed. Your cart items are still saved. What would you like to do?"
 
     if state.phase == Phase.SLOT_FILLING:
         buf.clear()
@@ -299,11 +355,11 @@ def _handle_remove_item(raw: str, state: ConversationState) -> str:
 
 def _format_cart(state: ConversationState) -> str:
     if not state.items:
-        return "Your cart is empty. You can start by saying something like 'add 5 kg rice'."
+        return "Your cart is empty. Try saying 'add 5 kg rice' to get started."
     lines = [f"Here's your cart ({len(state.items)} item(s)):"]
     for i, item in enumerate(state.items, 1):
         lines.append(f"  {i}. {item['name'].title()} — {item['quantity']} {item['unit']}")
-    lines.append("\nWould you like to add more or confirm the order?")
+    lines.append("Would you like to add more or confirm the order?")
     return "\n".join(lines)
 
 
@@ -336,7 +392,7 @@ def _save_order(state: ConversationState) -> str:
     state.force_transition(Phase.IDLE)
 
     return (
-        f"Your order has been confirmed!\n"
-        f"Order ID: {order_id}\n"
+        f"Your order has been confirmed! "
+        f"Order ID: {order_id}. "
         f"Thank you! Is there anything else I can help you with?"
     )
